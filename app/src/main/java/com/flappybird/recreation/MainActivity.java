@@ -316,6 +316,21 @@ class GameView extends View implements Choreographer.FrameCallback {
     private float cameraZoom = 1.0f;
     private float cinematicTimer = 0f;
     private int cinematicPhase = 0;
+
+    // --- 999 MARIO BOSS (meme) ---
+    private static final int MEME_BOSS_SCORE = 999;
+    private static final float MARIO_SHOT_INTERVAL = 1.4f;
+    private static final float FIREBALL_SPEED = 420f;
+    private boolean memeBossActive = false;
+    private float memeBossTimer = 0f;
+    private float marioFireTimer = 0f;
+    private float marioX = 0f, marioY = 0f;
+    private float pipeSkewPhase = 0f;
+    private Bitmap marioBitmap;
+    private final Matrix memeMatrix = new Matrix();
+    private final Paint memePaint = new Paint();
+    private final Rect fireballRect = new Rect();
+    private final List<Fireball> fireballs = new ArrayList<>();
     
     // --- MEDAL SHINE VARIABLES ---
     private Bitmap sparkleBitmap;
@@ -611,6 +626,12 @@ class GameView extends View implements Choreographer.FrameCallback {
         
         sparkleTimer = 0f;
         isSparkleAnimating = false;
+
+        memeBossActive = false;
+        memeBossTimer = 0f;
+        marioFireTimer = 0f;
+        pipeSkewPhase = 0f;
+        fireballs.clear();
 
         if (!settingDynamicDayNightEnabled) {
             if (settingBackground == 0) backgroundBitmap = bgDayBitmap;
@@ -1107,6 +1128,8 @@ class GameView extends View implements Choreographer.FrameCallback {
                     playSound(soundPoint); pipe.isScored = true;
                 }
 
+                if (!memeBossActive && score >= MEME_BOSS_SCORE) startMemeBoss();
+
                 boolean recycle;
                 if (settingReversePipesEnabled) {
                     recycle = pipe.x - (pipe.width * settingPipeWidth) > screenWidth;
@@ -1133,6 +1156,7 @@ class GameView extends View implements Choreographer.FrameCallback {
             }
         }
         
+        if (memeBossActive && gameState == GameState.PLAYING) updateMemeBoss(gameDeltaTime);
         if (gameState == GameState.PLAYING) { checkCollisions(); }
     }
     
@@ -1223,6 +1247,95 @@ class GameView extends View implements Choreographer.FrameCallback {
         burntTimer = 20.0f; 
         pipeElectrificationTimer = 20.0f;
         flashAlpha = 255;
+    }
+
+    private void startMemeBoss() {
+        memeBossActive = true;
+        memeBossTimer = 0f;
+        pipeSkewPhase = 0f;
+        marioFireTimer = 1.2f;
+        marioX = screenWidth + 150f * scale;
+        marioY = systemBarTop + getPlayableHeight() * 0.4f;
+        ensureMarioBitmap();
+        flashAlpha = 255;
+        playSound(soundThunder);
+        triggerThunderHaptic();
+        if (settingScreenShakeEnabled) triggerShake(12f, 0.8f);
+    }
+
+    private void updateMemeBoss(float dt) {
+        memeBossTimer += dt;
+        pipeSkewPhase += dt * 2.5f;
+
+        float targetX = screenWidth - 90f * scale;
+        marioX += (targetX - marioX) * Math.min(1f, 3f * dt);
+        float minY = systemBarTop + 70f * scale;
+        float maxY = screenHeight - systemBarBottom - groundHeight - 70f * scale;
+        float targetY = Math.max(minY, Math.min(birdY, maxY));
+        marioY += (targetY - marioY) * Math.min(1f, 2f * dt);
+
+        marioFireTimer -= dt;
+        if (marioFireTimer <= 0) {
+            marioFireTimer = MARIO_SHOT_INTERVAL;
+            fireballs.add(new Fireball(marioX - 30f * scale, marioY));
+            playSound(soundSwooshing);
+        }
+
+        Iterator<Fireball> it = fireballs.iterator();
+        while (it.hasNext()) {
+            Fireball f = it.next();
+            f.update(dt, birdX, birdY);
+            if (f.isOffScreen) { it.remove(); continue; }
+            if (gameState == GameState.PLAYING && !settingNoClipEnabled
+                    && Rect.intersects(birdRect, f.fillRect(fireballRect))) {
+                it.remove();
+                isBirdBurnt = true;
+                burntTimer = 10f;
+                flashAlpha = 255;
+                playSound(soundHit);
+                if (settingScreenShakeEnabled) triggerShake(15f, 0.6f);
+                gameOver();
+                return;
+            }
+        }
+    }
+
+    private void ensureMarioBitmap() {
+        if (marioBitmap != null) return;
+        String[] art = {
+            "....RRRRR.......",
+            "...RRRRRRRRR....",
+            "...HHHSSHHS.....",
+            "..HSHSSSHSSS....",
+            "..HSHSSSHSSSS...",
+            "..HHSSSSHHHH....",
+            "....SSSSSSS.....",
+            "..UUURRRUUU.....",
+            ".UUURRURRUUU....",
+            "UUURRUUURRRUU...",
+            "UURRRRRRRRRRUU..",
+            "UURRUUURUURRU...",
+            "..UU..U.U..UU..."
+        };
+        java.util.Map<Character, Integer> colors = new java.util.HashMap<>();
+        colors.put('R', Color.rgb(0xE4, 0x28, 0x1E));
+        colors.put('H', Color.rgb(0x7B, 0x3F, 0x00));
+        colors.put('S', Color.rgb(0xFF, 0xCC, 0x99));
+        colors.put('U', Color.rgb(0x2E, 0x4B, 0xE0));
+        int px = Math.max(3, Math.round(3 * scale));
+        marioBitmap = Bitmap.createBitmap(16 * px, 13 * px, Bitmap.Config.ARGB_8888);
+        Canvas c = new Canvas(marioBitmap);
+        Paint p = new Paint();
+        for (int row = 0; row < art.length; row++) {
+            for (int col = 0; col < art[row].length(); col++) {
+                Integer colr = colors.get(art[row].charAt(col));
+                if (colr == null) continue;
+                p.setColor(colr);
+                c.drawRect(col * px, row * px, (col + 1) * px, (row + 1) * px, p);
+            }
+        }
+        memePaint.setFilterBitmap(false);
+        memePaint.setAntiAlias(false);
     }
 
     private void checkCollisions() {
@@ -1365,6 +1478,13 @@ class GameView extends View implements Choreographer.FrameCallback {
                 float visualPipeWidth = pipe.width * settingPipeWidth;
                 float xPos = pipe.x - (visualPipeWidth - pipe.width) / 2f;
 
+                if (memeBossActive) {
+                    float sway = (float) Math.sin(pipeSkewPhase + pipe.x * 0.01f) * 4f;
+                    canvas.save();
+                    canvas.rotate(sway, xPos + visualPipeWidth / 2f,
+                            (pipe.getTopPipeY() + pipe.getBottomPipeY(pipeGap) + pipe.height) / 2f);
+                }
+
                 pipeDestRect.set(xPos, pipe.getTopPipeY(), xPos + visualPipeWidth, pipe.getTopPipeY() + pipe.height);
                 canvas.drawBitmap(currentPipeTopBitmap, null, pipeDestRect, pipe.pipePaint);
                 
@@ -1387,6 +1507,10 @@ class GameView extends View implements Choreographer.FrameCallback {
                     canvas.drawRect(pipeDestRect, goldenPipePaint);
                     pipeDestRect.set(xPos, pipe.getBottomPipeY(pipeGap), xPos + visualPipeWidth, pipe.getBottomPipeY(pipeGap) + pipe.height);
                     canvas.drawRect(pipeDestRect, goldenPipePaint);
+                }
+
+                if (memeBossActive) {
+                    canvas.restore();
                 }
             }
         }
@@ -1439,6 +1563,19 @@ class GameView extends View implements Choreographer.FrameCallback {
         // Draw Sparks (Over bird)
         for (SparkParticle sp : sparkParticles) {
             sp.draw(canvas, sparkPaint);
+        }
+
+        // --- MARIO BOSS DRAW ---
+        if (memeBossActive) {
+            if (marioBitmap != null) {
+                float mw = marioBitmap.getWidth();
+                float mh = marioBitmap.getHeight();
+                memeMatrix.reset();
+                memeMatrix.setScale(-1f, 1f);
+                memeMatrix.postTranslate(marioX + mw / 2f, marioY - mh / 2f);
+                canvas.drawBitmap(marioBitmap, memeMatrix, memePaint);
+            }
+            for (Fireball f : fireballs) f.draw(canvas);
         }
 
         if (settingWeatherEffect > 0) {
@@ -2192,6 +2329,39 @@ class GameView extends View implements Choreographer.FrameCallback {
         boolean isDead() { return life <= 0; }
     }
 
+    class Fireball {
+        float x, y, vx, vy, radius;
+        boolean isOffScreen = false;
+        Fireball(float x, float y) {
+            this.x = x; this.y = y;
+            vx = -FIREBALL_SPEED * scale; vy = 0;
+            radius = 11f * scale;
+        }
+        void update(float dt, float targetX, float targetY) {
+            float dx = targetX - x, dy = targetY - y;
+            float dist = (float) Math.hypot(dx, dy);
+            if (dist > 1f) {
+                float speed = FIREBALL_SPEED * scale;
+                float k = Math.min(1f, 3f * dt);
+                vx += ((dx / dist) * speed - vx) * k;
+                vy += ((dy / dist) * speed - vy) * k;
+            }
+            x += vx * dt; y += vy * dt;
+            if (x < -60 || x > screenWidth + 60 || y < -60 || y > screenHeight + 60) isOffScreen = true;
+        }
+        Rect fillRect(Rect r) {
+            int ri = (int) radius;
+            r.set((int) x - ri, (int) y - ri, (int) x + ri, (int) y + ri);
+            return r;
+        }
+        void draw(Canvas c) {
+            memePaint.setColor(Color.rgb(255, 90, 0));
+            c.drawCircle(x, y, radius, memePaint);
+            memePaint.setColor(Color.rgb(255, 200, 40));
+            c.drawCircle(x, y, radius * 0.55f, memePaint);
+        }
+    }
+
     class WeatherSystem {
         private WeatherParticle[] frontParticles;
         private WeatherParticle[] backParticles;
@@ -2633,4 +2803,4 @@ class Pipe {
         );
         return bottomBodyRect;
     }
-}
+                                                                                                       }
